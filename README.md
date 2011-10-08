@@ -6,12 +6,12 @@ This script converts Munin alerts into messages in a HipChat room.
 Put this script somewhere on your Munin master and make it executable. Then
 add it as a contact in your Munin configuration like so:
 
-    contact.hipchat.command | <THIS> <THIS> --room=<ROOM> --token=<TOKEN>
+    contact.hipchat.command | [THIS] [THIS] --room=[ROOM] --token=[TOKEN]
     contact.hipchat.always_send warning critical
 
-Replace <THIS> with the full path to this script (yes, it is supposed to be
-there twice). Replace <ROOM> with the name or ID of the room where you want
-the messages to arrive and replace <TOKEN> with your HipChat token.
+Replace [THIS] with the full path to this script (yes, it is supposed to be
+there twice). Replace [ROOM] with the name or ID of the room where you want
+the messages to arrive and replace [TOKEN] with your HipChat token.
 
 Don't forget to add it to your contacts list.
 
