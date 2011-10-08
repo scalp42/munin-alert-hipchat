@@ -18,3 +18,6 @@ Don't forget to add it to your contacts list.
 If you want to change the name associated with the message, pass a value for
 the --from argument. If you'd like the messages to link back to your Munin
 web interface then use --munin-prefix.
+
+If you need to put spaces or other "special" characters in a from or room value
+then you can use URL encoding. e.g. %20 for a space.

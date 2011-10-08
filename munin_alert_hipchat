@@ -68,6 +68,11 @@ my $MUNIN_URL_PREFIX = '';
 # Enforce the mandatory arguments
 &usage unless ($HIPCHAT_ROOM && $HIPCHAT_TOKEN);
 
+# A bodge to allow "special" characters in the -from and --room parameters
+# since it appears to be impossible to pass them safely from munin.conf.
+$HIPCHAT_FROM =~ s/\%([A-Fa-f0-9]{2})/pack('C', hex($1))/seg;
+$HIPCHAT_ROOM =~ s/\%([A-Fa-f0-9]{2})/pack('C', hex($1))/seg;
+
 # Read the data from Munin
 my $alert_data = '';
 while (<STDIN>) {
