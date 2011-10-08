@@ -1,0 +1,161 @@
+#!/usr/bin/perl
+# Copyright (c) 2011, Distilled Media Ltd.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# - Redistributions of source code must retain the above copyright notice,
+#   this list of conditions and the following disclaimer.
+# - Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# 
+# This script converts Munin alerts into messages in a HipChat room.
+#
+# Put this script somewhere on your Munin master and make it executable. Then
+# add it as a contact in your Munin configuration like so:
+#
+# contact.hipchat.command | <THIS> <THIS> --room=<ROOM> --token=<TOKEN>
+# contact.hipchat.always_send warning critical
+#
+# Replace <THIS> with the full path to this script (yes, it is supposed to be
+# there twice). Replace <ROOM> with the name or ID of the room where you want
+# the messages to arrive and replace <TOKEN> with your HipChat token.
+#
+# Don't forget to add it to your contacts list.
+#
+# If you want to change the name associated with the message, pass a value for
+# the --from argument. If you'd like the messages to link back to your Munin
+# web interface then use --munin-prefix.
+#
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+use HTML::Entities;
+use HTTP::Request::Common qw(POST);
+use LWP::UserAgent;
+
+# Command line arguments
+my $HIPCHAT_FROM = 'Munin';
+my $HIPCHAT_ROOM = '';
+my $HIPCHAT_TOKEN = '';
+my $MUNIN_URL_PREFIX = '';
+
+# Fetch the command line arguments
+&usage unless GetOptions(
+	'from=s' => \$HIPCHAT_FROM,
+	'room=s' => \$HIPCHAT_ROOM,
+	'token=s' => \$HIPCHAT_TOKEN,
+	'munin-prefix=s' => \$MUNIN_URL_PREFIX
+);
+
+# Enforce the mandatory arguments
+&usage unless ($HIPCHAT_ROOM && $HIPCHAT_TOKEN);
+
+# Read the data from Munin
+my $alert_data = '';
+while (<STDIN>) {
+	$alert_data .= $_;
+}
+
+# Parse the alerts and send messages about them.
+my @alerts = split /(?:\r\n|\r|\n){2}/o, $alert_data;
+if (@alerts) {
+	my $hipchat = new LWP::UserAgent();
+	foreach (@alerts) {
+		&send_to_hipchat($hipchat, &format_for_hipchat($_));
+	}
+}
+
+# Format an alert for HipChat
+sub format_for_hipchat {
+	# Encode the basic entities and then split for processing
+	my @alert = split /(?:\r\n|\r|\n)/o, encode_entities(shift);
+
+	# Re-format the first line.
+	if ($MUNIN_URL_PREFIX) {
+		$alert[0] =~ s#^(.*?) :: (.*?) :: #<a href="$MUNIN_URL_PREFIX/$1/$2/">$2</a><br />#o;
+	} else {
+		$alert[0] =~ s#^(.*?) :: (.*?) :: #<b>$2</b><br />#o;
+	}
+
+	# Figure out the highest alert level so that we can work out the colour it
+	# should be. While we're at it, re-format each line.
+	my $alert_level = 0;
+	my $alert_level_label = 'OK';
+	my $alerted_items = '';
+	for (my $i = 1; $i < @alert; $i++) {
+		if ($alert[$i] =~ /^\s+CRITICALs: (.*)$/o) {
+			$alert_level = ($alert_level > 2 ? $alert_level : 2);
+			$alert_level_label = 'CRITICAL';
+			$alerted_items = $1;
+		} elsif ($alert[$i] =~ /^\s+WARNINGs: (.*)$/o) {
+			$alert_level = ($alert_level > 1 ? $alert_level : 1);
+			$alert_level_label = 'WARNING';
+			$alerted_items = $1;
+		} elsif ($alert[$i] =~ /^\s+UNKNOWNs: (.*)$/o) {
+			$alert_level = ($alert_level > 1 ? $alert_level : 1);
+			$alert_level_label = 'UNKNOWN';
+			$alerted_items = $1;
+		} elsif ($alert[$i] =~ /^\s+OKs: (.*)$/o) {
+			$alert_level = ($alert_level > 0 ? $alert_level : 0);
+			$alert_level_label = 'OK';
+			$alerted_items = $1;
+		}
+
+		my @alerted_items = split /, /o, $alerted_items;
+		$alert[$i] = '';
+		foreach (@alerted_items) {
+			$alert[$i] .= "&nbsp;&nbsp;&nbsp;&nbsp;$alert_level_label: $_<br />";
+		}
+	}
+
+	# Convert the alert level to a colour.
+	if ($alert_level >= 2) {
+		$alert_level = "red";
+	} elsif ($alert_level == 1) {
+		$alert_level = "yellow";
+	} else {
+		$alert_level = "green";
+	}
+
+	return {
+		'message' => join('<br />', @alert),
+		'color' => $alert_level,
+	};
+}
+
+# Send an alert as a message to a HipChat room
+sub send_to_hipchat {
+	my $hipchat = shift;
+	my $alert = shift;
+
+	$alert->{'room_id'} = $HIPCHAT_ROOM;
+	$alert->{'from'} = $HIPCHAT_FROM;
+	$alert->{'notify'} = 1;
+
+	my $req = POST "https://api.hipchat.com/v1/rooms/message?format=json&auth_token=$HIPCHAT_TOKEN", $alert;
+	$hipchat->request($req);
+}
+
+# Print out a usage message.
+sub usage {
+	print "Usage: $0 [--from=Munin] --room=Room --token=1234abcd [--munin-prefix=https://munin.foo.com]\n";
+	exit(0);
+}
